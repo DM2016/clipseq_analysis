@@ -4,8 +4,7 @@ use warnings;
 use strict;
 use autodie;
 use Getopt::Long;
-
-#BEGIN{ unshift @INC , '/home/colebr/bin/' }; #The directory that contains the Z_score.pm module.
+use Clipseq;
 use Z_score;
 
 #Given a BED file of binding sites and a BED file of bound transcripts, report a sorted list of kmers with their frequency in the binding sites, their z-score, their mean frequency in randomized intervals from the bound transcripts, and the standard deviation of the mean frequency in randomized intervals for the bound transcripts.
@@ -25,17 +24,26 @@ use Z_score;
 
 
 # Parse command line options with GetOptions:
-my $verbose = ''; #default is quiet operation, overridden with --verbose or -v
-my $k       = 6;  #default to hexamer analysis, overridden with -k 5 (e.g.)
-my $i       = 100; #default to 100 iterations for randomization of binding sites (should make normal distribution of frequencies across iterations)
+my $verbose = '';  #Default is quiet operation, overridden with --verbose or -v
+my $k       = 6;   #Default to hexamer analysis, overridden with -k 5 (e.g.)
+my $i       = 100; #Default to 100 iterations for randomization of binding sites (should make normal distribution of frequencies across iterations).
+my $retries = 10;  #Default to maximum of 10 retries for failed randomizations.
 
-die "Failed to parse options: $!\n" unless GetOptions( 'verbose' => \$verbose , 'k=i' => \$k , 'i=i' => \$i , );
+die "Failed to parse options: $!\n" unless GetOptions( 'verbose'   => \$verbose ,
+						       'k=i'       => \$k       ,
+						       'i=i'       => \$i       ,
+						       'retries=i' => \$retries ,
+						     );
 
-my $usage = "compute_z_scores [options] BED_file_of_binding_sites BED_file_of_bound_transcripts output_file\n" . 
-    "Options:\n" .
-    "-v\t--verbose\tSet verbose operation.\n" .
-    "-k\t\t\tSet kmer length. Default: 6\n" .
-    "-i\t\t\tIteration number for randomizations. Default: 100\n";
+my $usage = <<'And that is the usage.';
+compute_z_scores [options] BED_file_of_binding_sites BED_file_of_bound_transcripts output_file
+Options:
+-v    --verbose    Set verbose operation.
+-k                 Set kmer length. Default: 6
+-i                 Iteration number for randomizations. Default: 100
+-r    --retries    Maximum number of rerandomizations. Default: 10
+And that is the usage.
+
 die $usage unless @ARGV == 3;
 
 my ( $binding_sites_BED_file , $bound_transcripts_BED_file , $output_file ) = @ARGV;
@@ -43,6 +51,8 @@ my ( $binding_sites_BED_file , $bound_transcripts_BED_file , $output_file ) = @A
 #Check the two input files.  Clobber the output file quietly if it exists.
 die "$binding_sites_BED_file: not a file, dying.\n"     unless -f $binding_sites_BED_file;
 die "$bound_transcripts_BED_file: not a file, dying.\n" unless -f $bound_transcripts_BED_file;
+
+my @chromosomes = Clipseq::extract_chromosomes( $bound_transcripts_BED_file ); #Extract chromosomes to iterate over.
 
 open my $out , ">" , $output_file;
 
@@ -60,145 +70,138 @@ unlink $binding_sites_FASTA_file; #clean up
 my @randomized_bed_files; #a list of file names for the $i bed files of ranodmized sites within each bound transcript
 
 if ( $verbose ) {
-    if ( $observed_kmer_frequencies ) {
-	warn "Entering randomization iterations...\n";
-	warn "Successfully collected observed kmer frequencies.\n";
-    }
+  if ( $observed_kmer_frequencies ) {
+    warn "Entering randomization iterations...\n";
+    warn "Successfully collected observed kmer frequencies.\n";
+  }
 }
 
-
 for my $iteration ( 1 .. $i ) {
+  my $iteration_bed_file = $binding_sites_BED_file . '.randomized_' . $iteration;
+  open my $iteration_bed, ">", $iteration_bed_file;
 
-    my $iteration_bed_file = $binding_sites_BED_file . '.randomized_' . $iteration;
-    open my $iteration_bed, ">", $iteration_bed_file;
+  for my $current_chromosome ( @chromosomes ) { 
+    for my $strand ( '+' , '-' ) {
 
-    for my $chromosome ( 1 .. 22 , 'X' , 'Y' ) { 
-	my $current_chromosome = 'chr' . $chromosome;
-	
-	for my $strand ( '+' , '-' ) {
+      my ( @strand_transcripts , @strand_binding_sites ); #populate with BED has references
 
-	    my ( @strand_transcripts , @strand_binding_sites ); #populate with BED has references
+      #read in transcripts on that strand
+      open my $transcripts, "<", $bound_transcripts_BED_file;
+      while ( <$transcripts> ) {
+	chomp;
+	next unless /^chr/; #skip non-BED lines
+	my %transcript;
+	@transcript{@bed_fields} = split /\t/;
+	next unless $transcript{chrom} eq $current_chromosome;
+	next unless $transcript{strand} eq $strand;
+	push @strand_transcripts, \%transcript;
+      }
+      close $transcripts;
 
-	    #read in transcripts on that strand
-	    open my $transcripts, "<", $bound_transcripts_BED_file;
-	    while ( <$transcripts> ) {
-		chomp;
-		next unless /^chr/; #skip non-BED lines
-		my %transcript;
-		@transcript{@bed_fields} = split /\t/;
-		next unless $transcript{chrom} eq $current_chromosome;
-		next unless $transcript{strand} eq $strand;
-		push @strand_transcripts, \%transcript;
+      open my $binding_sites, "<", $binding_sites_BED_file;
+      while ( <$binding_sites> ) {
+	chomp;
+	next unless /^chr/; #skip non-BED lines
+	my %binding_site;
+	@binding_site{@bed_fields} = split /\t/;
+	next unless $binding_site{chrom}  eq $current_chromosome;
+	next unless $binding_site{strand} eq $strand;
+	push @strand_binding_sites, \%binding_site;
+      }
+      close $binding_sites;
+
+      for my $transcript ( @strand_transcripts ) { #really a transcript ref
+	my @binding_sites;
+	for my $binding_site ( @strand_binding_sites ) {
+	  next unless $binding_site->{start} >= $transcript->{start};
+	  next unless $binding_site->{end}   <= $transcript->{end};
+	  push @binding_sites, $binding_site;
+	}
+
+	next unless @binding_sites; #skip unbound transripts
+	#randomize the position of each binding site within that transcript, without overlaps
+	my @randomized_binding_sites; #array of BED hashrefs
+	my @randomized_coverage;
+
+	my $redo_count = 0;
+	for my $binding_site ( @binding_sites ) {
+	  my $binding_site_length = $binding_site->{end} - $binding_site->{start};
+	  my $transcript_length   = $transcript->{end}   - $transcript->{start};
+	  my $last_mappable_position = $transcript_length - $binding_site_length;
+	  my $randomized_start_offset = int(rand( $last_mappable_position ) );
+	  my $randomized_start_coordinate = $transcript->{start} + $randomized_start_offset;
+	  my $randomized_end_coordinate   = $randomized_start_coordinate + $binding_site_length;
+
+	  #check to see the randomized peak doesn't overlap already randomized coverage:
+	  my $seen;
+	  for my $nt ( $randomized_start_coordinate .. $randomized_end_coordinate ) {
+	    if ( $randomized_coverage[$nt] ) {
+	      $seen++;
 	    }
-	    close $transcripts;
+	  }
 
-	    open my $binding_sites, "<", $binding_sites_BED_file;
-	    while ( <$binding_sites> ) {
-		chomp;
-		next unless /^chr/; #skip non-BED lines
-		my %binding_site;
-		@binding_site{@bed_fields} = split /\t/;
-		next unless $binding_site{chrom}  eq $current_chromosome;
-		next unless $binding_site{strand} eq $strand;
-		push @strand_binding_sites, \%binding_site;
+	  #Rerandomize if necessary until the maximum retry count is reached:
+	  if ( $seen ) {
+	    if ( $redo_count < $retries ) {
+	      redo;
 	    }
-	    close $binding_sites;
+	    else {
+	      next; #Skip this binding site.
+	    }
+	  }
 
-	    for my $transcript ( @strand_transcripts ) { #really a transcript ref
-		my @binding_sites;
-		for my $binding_site ( @strand_binding_sites ) {
-		    next unless $binding_site->{start} >= $transcript->{start};
-		    next unless $binding_site->{end}   <= $transcript->{end};
-		    push @binding_sites, $binding_site;
-		}
-		
-		next unless @binding_sites; #skip unbound transripts
-		
-		#randomize the position of each binding site within that transcript, without overlaps
-		my @randomized_binding_sites; #array of BED hashrefs
-		my @randomized_coverage; 
+	  for my $nt ( $randomized_start_coordinate .. $randomized_end_coordinate  ) {
+	    $randomized_coverage[$nt]++;
+	  }
+	  #push randomized BED hash reference onto @randomized_binding_sites
+	  my $randomized_binding_site = { chrom  => $current_chromosome,
+					  start  => $randomized_start_coordinate,
+					  end    => $randomized_end_coordinate,
+					  name   => '',
+					  score  => 0,
+					  strand => $strand
+					};
 
-		my $redo_count = 0;
-		for my $binding_site ( @binding_sites ) {
-		    my $binding_site_length = $binding_site->{end} - $binding_site->{start};
-		    my $transcript_length   = $transcript->{end}   - $transcript->{start};
-		    my $last_mappable_position = $transcript_length - $binding_site_length;
-		    my $randomized_start_offset = int(rand( $last_mappable_position ) );
-		    my $randomized_start_coordinate = $transcript->{start} + $randomized_start_offset;
-		    my $randomized_end_coordinate   = $randomized_start_coordinate + $binding_site_length;
+	  push @randomized_binding_sites, $randomized_binding_site;
+	}
 
-		    #check to see the randomized peak doesn't overlap already randomized coverage:
-		    my $seen;
-		    for my $nt ( $randomized_start_coordinate .. $randomized_end_coordinate ) {
-			if ( $randomized_coverage[$nt] ) {
-			    $seen++;
-			}
-		    }
-		    
-		    #Rerandomize at most 10 times:
-		    if ( $seen ) {
-			if ( $redo_count < 10 ) {
-			    redo;
-			}
-			else {
-			    next; #Skip this binding site.
-			}
-		    }
+	#Add the randomized binding sites to the $iteration_bed filehandle
+	for my $site ( @randomized_binding_sites ) {
+	  print {$iteration_bed} "$site->{chrom}\t$site->{start}\t$site->{end}\t$site->{name}\t$site->{score}\t$site->{strand}\n";
+	}
+      } #onto the next strand transcript
+    } #onto the next strand
+  } #onto the next chrom
+  #push the iteration bed file onto an array of $i randomized binidng site BED files
+  unshift @randomized_bed_files, $iteration_bed_file;
+  close $iteration_bed;
 
-		    for my $nt ( $randomized_start_coordinate .. $randomized_end_coordinate  ) {
-			$randomized_coverage[$nt]++;
-		    }
-		    #push randomized BED hash reference onto @randomized_binding_sites
-		    my $randomized_binding_site = {
-			chrom  => $current_chromosome,
-			start  => $randomized_start_coordinate,
-			end    => $randomized_end_coordinate,
-			name   => '',
-			score  => 0,
-			strand => $strand
-		    };
-		    
-		    push @randomized_binding_sites, $randomized_binding_site;
-		}
-
-		#Add the randomized binding sites to the $iteration_bed filehandle
-		for my $site ( @randomized_binding_sites ) {
-		    print {$iteration_bed} "$site->{chrom}\t$site->{start}\t$site->{end}\t$site->{name}\t$site->{score}\t$site->{strand}\n";
-		}
-	    } #onto the next strand transcript
-	} #onto the next strand
-    } #onto the next chrom
-    #push the iteration bed file onto an array of $i randomized binidng site BED files
-    unshift @randomized_bed_files, $iteration_bed_file;
-    close $iteration_bed;
-
-    if ( $verbose ) {
-	warn "Completed randomization iteration $iteration.\n";
-    }
-
+  if ( $verbose ) {
+    warn "Completed randomization iteration $iteration.\n";
+  }
 }
 
 if ( $verbose ) {
-    warn "All $i randomization iterations complete.\n";
+  warn "All $i randomization iterations complete.\n";
 }
 
 
 #convert each randomized BED file to FASTA file
 my @randomized_fasta_files;
 for my $file ( @randomized_bed_files ) { #no filehandles are open to this file
-    my $fasta_file_name = $file . '.fa';
-    Z_score::bed_to_fa( $file , $fasta_file_name );
-    unshift @randomized_fasta_files, $fasta_file_name;
-    unlink $file; #clean up BED upon conversion to FASTA
+  my $fasta_file_name = $file . '.fa';
+  Z_score::bed_to_fa( $file , $fasta_file_name );
+  unshift @randomized_fasta_files, $fasta_file_name;
+  unlink $file; #clean up BED upon conversion to FASTA
 }
 
 warn "Completed conversion of randomized binding sites to sequences.\n" if $verbose;
 
 my @randomized_kmer_frequencies; #list of refs to hashes of kmer frequencies
 for my $file ( @randomized_fasta_files ) {
-    my $kmer_frequency_hashref = Z_score::count_kmers( $file , $k );
-    unshift @randomized_kmer_frequencies, $kmer_frequency_hashref;
-    unlink $file; #clean up FASTA after collection of kmer frequency hashrefs
+  my $kmer_frequency_hashref = Z_score::count_kmers( $file , $k );
+  unshift @randomized_kmer_frequencies, $kmer_frequency_hashref;
+  unlink $file; #clean up FASTA after collection of kmer frequency hashrefs
 }
 
 warn "Completed collection of kmer frequencies in randomized binding sites.\n" if $verbose;
@@ -208,46 +211,39 @@ my ( %mean_frequency , %stdev , %zscore );
 
 #For each observed kmer, compute mean randomized kmer frequency, standard deviation of randomized kmer frequency, and z_score
 for my $kmer ( keys %$observed_kmer_frequencies ) {
-    my $kmer_frequency = $observed_kmer_frequencies->{$kmer};
+  my $kmer_frequency = $observed_kmer_frequencies->{$kmer};
 
-    my $total_random_kmer_frequency;
-    for my $iteration ( 0 .. ( $i - 1 ) ) {
-	if ( $randomized_kmer_frequencies[$iteration]->{$kmer} ) {
-	    $total_random_kmer_frequency += $randomized_kmer_frequencies[$iteration]->{$kmer};
-	}
+  my $total_random_kmer_frequency;
+  for my $iteration ( 0 .. ( $i - 1 ) ) {
+    if ( $randomized_kmer_frequencies[$iteration]->{$kmer} ) {
+      $total_random_kmer_frequency += $randomized_kmer_frequencies[$iteration]->{$kmer};
     }
-    $mean_frequency{$kmer} = $total_random_kmer_frequency / $i;
+  }
+  $mean_frequency{$kmer} = $total_random_kmer_frequency / $i;
 
-    my $sum_of_squared_deviations_from_the_mean;
-    for my $iteration ( 0 .. ( $i - 1 ) ) {
-	next unless $randomized_kmer_frequencies[$iteration]->{$kmer};
-	my $squared_deviation_from_the_mean =  ( $randomized_kmer_frequencies[$iteration]->{$kmer} - $mean_frequency{$kmer} ) ** 2;
-	$sum_of_squared_deviations_from_the_mean += $squared_deviation_from_the_mean;
-    }
-    $stdev{$kmer} = $sum_of_squared_deviations_from_the_mean ** 0.5;
+  my $sum_of_squared_deviations_from_the_mean;
+  for my $iteration ( 0 .. ( $i - 1 ) ) {
+    next unless $randomized_kmer_frequencies[$iteration]->{$kmer};
+    my $squared_deviation_from_the_mean =  ( $randomized_kmer_frequencies[$iteration]->{$kmer} - $mean_frequency{$kmer} ) ** 2;
+    $sum_of_squared_deviations_from_the_mean += $squared_deviation_from_the_mean;
+  }
+  $stdev{$kmer} = $sum_of_squared_deviations_from_the_mean ** 0.5;
 
-    if ( $stdev{$kmer} ) {
-	$zscore{$kmer} = ( $observed_kmer_frequencies->{$kmer} - $mean_frequency{$kmer} ) / $stdev{$kmer};
-    }
-    else {
-	#stdev is zero
-	$zscore{$kmer} = 'infinity';
-    }
+  if ( $stdev{$kmer} ) {
+    $zscore{$kmer} = ( $observed_kmer_frequencies->{$kmer} - $mean_frequency{$kmer} ) / $stdev{$kmer};
+  }
+  else {
+    #stdev is zero
+    $zscore{$kmer} = 'infinity';
+  }
 }
 
 warn "Completed calculation of Z-scores, mean frequencies, and standard deviations.\n" if $verbose;
 
 print {$out} "kmer\tobserved_kmer_frequency\tz_score\tmean_randomized_kmer_frequency\tstdev_of_randomized_kmer_frequency\n"; #print header
 
-for my $kmer ( sort { $zscore{$b} <=> $zscore{$a} } keys %zscore ) {
-    print {$out} "$kmer\t$observed_kmer_frequencies->{$kmer}\t$zscore{$kmer}\t$mean_frequency{$kmer}\t$stdev{$kmer}\n";
+for my $kmer ( sort { $zscore{$b} <=> $zscore{$a} } keys %zscore ) { #Sort kmers descending by Z-score.
+  print {$out} "$kmer\t$observed_kmer_frequencies->{$kmer}\t$zscore{$kmer}\t$mean_frequency{$kmer}\t$stdev{$kmer}\n";
 }
 
 warn "Run complete. Wrote output.\n" if $verbose;
-
-
-    
-
-
-	    
-		

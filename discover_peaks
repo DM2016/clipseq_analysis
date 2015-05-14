@@ -24,23 +24,24 @@ my ( $aligned_reads_files_string , $transcriptome_file , $output_file );
 
 
 #Collect options:
-my $usage   = "Discovery of CLIP-seq peaks by an empirical randomized algorithm.\nUsage: ./discover_peaks -a replicate_1.bed[,replicate_2.bed,...] -t transcriptome.bed <-i iterations> <-f fdr> -o output_file.bed\n";
-my $options = "Options:\n-a\t--aligned_reads_files\tComma-separated list of aligned reads to search for peaks (required).\n" .
-              "-t\t--transcriptome_file\t\tA BED or BED12 formatted transcriptome file of transcripts to search for peaks (required).  E.g. refSeq knownGene.\n" .
-              "-o\t--output_file\t\tDestination for the output file, written in BED format (required).\n" .
-              "-i\t--iterations\t\tNumber of iterations to randomize observed alignemnt coordinates within transcript to estimate significance. Default = 100\n" .
-              "-f\t--fdr\t\t\tFalse discovery rate cutoff. Lower value is more stringent. Default = 0.01\n" .
-              "-p\t--pooled\t\tPooled replicate strategy for when replicates are called.\n" .
-              "-l\t--log_file\t\tFile to write pipeline log to. Default = none.\n" .
-              "-v\t--verbose\t\tSet verbose operation: pipeline will report on progress via STDERR. Default = FALSE.\n" .
-              "-h\t--help\t\t\tPrint this help message.\n";
-              
+my $usage   =  "Discovery of CLIP-seq peaks by an empirical randomized algorithm.\nUsage: ./discover_peaks -a replicate_1.bed[,replicate_2.bed,...] -t transcriptome.bed <-i iterations> <-f fdr> -o output_file.bed\n";
+my $options = <<'And now you are out of options.';
+Options:
+-a    --aligned_reads_files    Comma-separated list of aligned reads to search for peaks (required).
+-t    --transcriptome_file     A BED or BED12 formatted transcriptome file of transcripts to search for peaks (required).  E.g. refSeq knownGene.
+-o    --output_file            Destination for the output file, written in BED format (required).
+-i    --iterations             Number of iterations to randomize observed alignemnt coordinates within transcript to estimate significance. Default = 100
+-f    --fdr                    False discovery rate cutoff. Lower value is more stringent. Default = 0.01
+-l    --log_file               File to write pipeline log to. Default = none.
+-v    --verbose                Set verbose operation: pipeline will report on progress via STDERR. Default = FALSE.
+-h    --help                   Print this help message.
+And now you are out of options.
+
 unless ( @ARGV ) {
   die "$usage\n$options";
 }
 
-die "Failed to collect arguments: $!\n" unless GetOptions( "replicate_strategy=s"  => \$replicate_strategy ,
-							   "iterations=i"          => \$iterations ,
+die "Failed to collect arguments: $!\n" unless GetOptions( "iterations=i"          => \$iterations ,
 							   "fdr=f"                 => \$fdr ,
 							   "help"                  => \$help ,
 							   "aligned_reads_files=s" => \$aligned_reads_files_string ,
@@ -73,17 +74,13 @@ my $parameters = { 'iterations'                 => $iterations ,
                    'log_file'                   => $log_file ,
                    'verbose'                    => $verbose };
 
-if ( $replicate_strategy eq 'pooled' ) {
-  $verbose and warn "Beginning pipeline.\n";
-  my $start_time = time();
-
-  Clipseq::discover_peaks( $parameters );
-
-  if ( $verbose ) {
-    my $end_time = time();
-    my $run_time = $end_time - $start_time;
-    warn "Pipeline complete. Elapsed time: $run_time seconds.\n";
-  }
+$verbose and warn "Beginning pipeline.\n";
+my $start_time = time();
+Clipseq::discover_peaks( $parameters );
+if ( $verbose ) {
+  my $end_time = time();
+  my $run_time = $end_time - $start_time;
+  warn "Pipeline complete. Elapsed time: $run_time seconds.\n";
 }
 
 __END__

@@ -8,7 +8,6 @@ use File::Copy qw/ copy move /;
 use feature qw/ state switch say /; #Modern perl features supported in 5.10 or newer.
 require Exporter;
 
-
 our @ISA = qw/ Exporter /;
 our $VERSION = '0.01';
 our @EXPORT_OK = qw/ is_valid_bed_line parse_bed_line read_bed_line write_bed_line discover_peaks build_genomic_coverage_strandwise widen_bed /; #Export nothing by default.

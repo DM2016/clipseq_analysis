@@ -35,12 +35,12 @@ This program is free software: you are free to distribute under the terms of the
 END
 
 #Collect options.
-my ( $a_file , $b_file , $transcriptome_file ); #Required arguments.
+my ( $a_file , $b_file , $transcriptome_file , $output_file ); #Required arguments.
 my $max_rand_attempts = 100; #Default argument.
 my $verbose = 0; #Default to quiet operation.
 my ( $version , $license ); #Arguments to die for.
 
-GetOptions( "a_file=s" => \$a_file , "b_file=s" => \$b_file , "transcriptome_file=s" => \$transcriptome_file ,
+GetOptions( "a_file=s" => \$a_file , "b_file=s" => \$b_file , "transcriptome_file=s" => \$transcriptome_file , "output_file=s" => \$output_file ,
 	    "version" => \$version , "license" => \$license , "max_rand_attempts=i" => \$max_rand_attempts , "verbose" => \$verbose );
 
 #Validate invocation:
@@ -262,10 +262,11 @@ sub main {
   $verbose and say "Program complete. Out of $total_transcripts total transcripts, $transcripts_with_peaks had intervals from $a_file and $transcripts_with_no_peaks had none.";
   $verbose and say "Of the transcripts that had intervals, $successful_randomized_transcripts successfully completed randomization and $unsuccessful_randomized_transcripts failed to randomize within the provided rerandomized limit.";
 
-  #Print output header:
-  say join "\t" , ( "Total transcriptome-overlapping peaks in $a_file:" , "Peaks with coverage in $b_file:" , "Randomized peaks with coverage in $b_file:" );
+  open my $results , ">" , $output_file or die "Failed to open output file: $!\n";
 
-  say join "\t" , ( $total_peaks_in_transcripts , $observed_shared_peaks , $randomized_shared_peaks );
+  #Print output header:
+  say {$results} join "\t" , ( "Total transcriptome-overlapping peaks in $a_file:" , "Peaks with coverage in $b_file:" , "Randomized peaks with coverage in $b_file:" );
+  say {$results} join "\t" , ( $total_peaks_in_transcripts , $observed_shared_peaks , $randomized_shared_peaks );
 }
 
 main();

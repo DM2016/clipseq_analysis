@@ -17,6 +17,7 @@ Options:
 -a    --a_file                The first input CLIP-seq intervals file (peaks, e.g.).
 -b    --b_file                The second input CLIP-seq intervals file.
 -t    --transcriptome_file    The transcriptome within which to compare the two binding profiles.
+-o    --output_file           The output file to write results to.
 -m    --max_rand_attempts     The maximum number of times to attempt rerandomizing an interval. Prevents infinite rerandomization. Default: 100.
       --verbose               Set verbose mode of operation. Default: FALSE.
       --version               Print version information and exit successfully.
@@ -53,8 +54,8 @@ if ( $license ) {
   exit;
 }
 
-unless ( $a_file and -f $a_file and $b_file and -f $b_file and $transcriptome_file and -f $transcriptome_file ) {
-  die "One of the three required files does not exist.  Fatal death by dying.\n$usage";
+unless ( $a_file and -f $a_file and $b_file and -f $b_file and $transcriptome_file and -f $transcriptome_file and $output_file ) {
+  die "One of the four required files does not exist. \n$usage";
 }
 
 unless ( $max_rand_attempts > 0 and $max_rand_attempts < 1_000_000_000_000_000_000 ) { #Pretty big ceiling here, let's round it up to infinity.

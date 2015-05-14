@@ -1,0 +1,13 @@
+clipseq_analysis - Bioinformatics software for the analysis of CLIP-seq experiments.
+
+Installation: just add this directory to your environment's PATH and PERL5LIB variables.
+
+Tools:
+
+discover_peaks        - A tool to identify CLIP-seq peaks from aligned reads. Takes BED format (so you might need to convert from what your aligner writes).
+compute_z_scores      - A tool to identify enriched motifs in CLIP-seq peaks.
+compare_clip_profiles - A tool to compare two sets of CLIP-seq peaks.
+
+
+All of the above tools are standalone executables.  Invoke them with no arguments for usage information.  Pass them to `perldoc` for embedded documentation.
+

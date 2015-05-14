@@ -53,7 +53,7 @@ if ( $license ) {
   exit;
 }
 
-unless ( -f $a_file and -f $b_file and -f $transcriptome_file ) {
+unless ( $a_file and -f $a_file and $b_file and -f $b_file and $transcriptome_file and -f $transcriptome_file ) {
   die "One of the three required files does not exist.  Fatal death by dying.\n$usage";
 }
 

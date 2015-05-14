@@ -95,9 +95,10 @@ discover_peaks -a aligned_reads.bed -t transcriptome_to_search.bed -o peaks.bed
 
 =head1 DESCRIPTION
 
-This program provides a pipeline to identify significant protein-RNA interaction sites within annotated transcripts using CLIP-seq data.  The permutation algorithm developed by Yeo et al is used to establish a prior distribution for aligned CLIP-seq reads forming overlaps of each height in each transcript in the provided annotation set, given the number and length of CLIP-seq reads that align to that transcript.
+This program identifies significant protein-RNA interaction sites within annotated transcripts using CLIP-seq data.  The empirical, permutation-based algorithm developed by Yeo et al is used to establish a prior distribution for aligned CLIP-seq reads forming overlaps in the provided transcriptome annotation, given the number and length of CLIP-seq reads that align to that transcript.
 
-For a summary of required and optional arguments, invoke discover_peaks from the command line.
+For a summary of required and optional arguments, invoke discover_peaks from the command line:
+$ ./discover_peaks
 
 =head1 USAGE
 
@@ -107,11 +108,11 @@ This program requires three arguments: aligned CLIP-seq reads to search for peak
 
 Required (positional) arguments, which may be shortened to single letters:
 
--a  --aligned_reads       A file containing aligned CLIP-seq reads, or a comma-separated string of file names.
+-a  --aligned_reads       A BED file containing aligned CLIP-seq reads, or a comma-separated string of file names.
 
--t  --transcriptome       A file containing transcripts to search for peaks.  Aligned reads outside of the transcriptome are not searched because the permutation algorithm requires a transcript start and end coordinate to constrain permutation of aligned reads.
+-t  --transcriptome       A BED or BED12 file containing transcripts to search for peaks.  Aligned reads outside of the transcriptome are not searched because the permutation algorithm requires a transcript start and end coordinate to constrain permutation of aligned reads.
 
--o  --output_file         A file name to output peaks to in BED format.
+-o  --output_file         A file name to output peaks to in BED format (6-column version).
 
 Optional (keyword) arguments, including their default values:
 
@@ -129,31 +130,17 @@ Optional (keyword) arguments, including their default values:
 
 =head1 DEPENDENCIES
 
-This program does not require modern Perl features that were made available after version 5.10.1 to retain backwards compatibility for older computing systems.
+Perl version 5.10.1 or higher.
 
-This program requires bedtools to be installed and accessible to the operating system (e.g. GNU/Linux operating systems, the bedtools must be in a directory in the $PATH environment variable).  Bedtools is used to perform rapid genome arithmetic.  Future releases may relax this dependency using pure perl implementations of genome arithmetic operations at the cost of execution speed.
-
-Currently only BED format is supported for transcriptome and aligned reads files.  This will change in future releases.
-
-=head1 PERFORMANCE
-
-This program uses data structures that divide the genome into individual strands of each chromosome that is extracted from the provided transcriptome.  This drastically reduces the required memory at the expense of compute time, however increasing the iterations for permutation of alignments occurs within each strand of each chromosome, so no additional computation is needed to extract reads and transcripts.
+Currently only BED format is supported for transcriptome and aligned reads files.  This may be subject to change in future versions.
 
 =head1 AUTHOR
 
 Brian Sebastian Cole, E<lt>colebr@mail.med.upenn.eduE<gt>
 
-=head1 DEVELOPMENT
-
-This software was developed under the support of the author's thesis advisor Dr. Kristen W. Lynch, PhD, at the Raymond and Ruth Perelman School of Medicine, University of Pennyslvania, Philadelphia, Pennsylvania.  The author was (and might still be) a PhD candidate in the Cell and Molecular Biology graduate group, and the advisor was (and might still be) Professor of Biochemistry and Molecular Biophysics.
-
-Development was conducted with Perl version 5.10.1 (system), and version 5.14.2 (home).  Programming was performed in GNU emacs version 23.1.1 with the cperl editing mode.  Computation and testing was performed on the Penn Medicine Academic Computing Services high performance compute cluster, using CLIP-seq data from the author and the advisor among previously published CLIP-seq experiments with raw data available in the public domain at NCBI SRA.
-
-The author is indebted to the support of the PMACS systems administrators, especially Anand Srinivasan, and also to the Philadelphia Perl Mongers for helpful recommendations about code profiling during a presentation by the author.
-
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012,2013, and 2014 by Brian Sebastian Cole
+Copyright (c) 2012,2013,2014, and 2015 by Brian Sebastian Cole
 
 This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself, either Perl version 5.14.2 or, at your option, any later version of Perl 5 you have available.
 

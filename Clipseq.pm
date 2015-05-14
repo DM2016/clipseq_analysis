@@ -10,7 +10,7 @@ require Exporter;
 
 our @ISA = qw/ Exporter /;
 our $VERSION = '0.01';
-our @EXPORT_OK = qw/ is_valid_bed_line parse_bed_line read_bed_line write_bed_line discover_peaks build_genomic_coverage_strandwise widen_bed /; #Export nothing by default.
+our @EXPORT_OK = qw/ is_valid_bed_line parse_bed_line read_bed_line write_bed_line discover_peaks build_genomic_coverage_strandwise widen_bed count_kmers bed_to_fa /; #Export nothing by default.
 
 #Format structures, callable from other namespaces that use this module:
 our @bed_fields   = qw/ chrom start end name score strand /; #The standard BED6 fields.
@@ -492,6 +492,41 @@ sub bedtools_intersect_v {
   `bedtools intersect -v -s -a $a_file -b $b_file > $output_file`;
 }
 
+
+sub bed_to_fa {
+  #Run bedtools getfasta -s to convert BED intervals to FASTA.
+  #Usage: bed_to_fa( $bed_file , $genome_fasta_file , $fasta_file );
+  my ( $bed_file , $genome_fasta_file , $output_fasta_file ) = @_;
+  `bedtools getfasta -s -fi $genome_fasta_file -bed $bed_file -fo $output_fasta_file`;
+}
+
+sub count_kmers {
+  #Counts kmers in a fasta file, returns a reference to an unsorted hash of their frequency
+  my ( $fasta_file , $k ) = @_;
+
+  open my $in, "<", $fasta_file or croak "$fasta_file: $!\n";
+  my ( %total_kmer_hits , $total_kmers , %kmer_frequency );
+  while ( <$in> ) {
+    chomp;
+    next if /^>/; #skip FASTA name lines
+    my $seq = $_;
+    my $length = length $seq;
+    next unless $length >= $k; #skip sequences shorter than k
+    my $last_start_index = $length - $k;
+    for my $pos ( 0 .. $last_start_index ) {
+      my $sequence = uc( substr $seq , $pos , $k );
+      $total_kmers++;
+      $total_kmer_hits{ $sequence }++;
+    }
+  }
+  for my $kmer ( keys %total_kmer_hits ) {
+    $kmer_frequency{ $kmer } = $total_kmer_hits{ $kmer } / $total_kmers;
+  }
+  close $in;
+  return \%kmer_frequency;
+}
+
+
 1;
 
 __END__
@@ -502,14 +537,124 @@ Clipseq.pm - Perl module for the analysis of CLIP-seq data.
 
 =head1 SYNOPSIS
 
-  This module provides an interface to low-level manipulations of CLIP-seq data and is meant to be called from a higher-level program, such as the discover_peaks script provided with the clipseq_analysis distribution.  See the embedded documentation for that script with `perldoc`.
-  The functions in this module handle file I/O, format parsing, building genomic coverage data structures, and iterative randomization for CLIP-seq signal peak detection.
+This module provides an interface to low-level manipulations of CLIP-seq data and is meant to be called from a higher-level program, such as the discover_peaks script provided with the clipseq_analysis distribution.  See the embedded documentation for that script with `perldoc`.
+The functions in this module handle file I/O, format parsing, building genomic coverage data structures, and iterative randomization for CLIP-seq signal peak detection.
 
-  Some functions in this module may use reimplementations of genome arithmetic that could be performed faster with bedtools.  The ability to integrate bedtools calls is provided, but this module does not require bedtools to function.
+Some functions in this module may use reimplementations of genome arithmetic that could be performed faster with bedtools.  The ability to integrate bedtools calls is provided, but this module does not require bedtools to function.
 
-=head2 EXPORT
+=head1 EXPORT
 
-  None by default. Exportable functions are documented here:
+None by default. Exportable functions are documented here:
+
+=head2 rewind
+
+rewind( $filehandle ); #Or filehandle reference, or IO::File object.
+
+Given a scalar filehandle or filehandle reference (or other seekable object such as IO::File and related objects), seek the filehandle to its beginning.  Returns nothing.
+
+=head2 parse_bed_line
+
+my $parsed_bed_line = parse_bed_line( \$raw_bed_line );
+
+Given a reference to a BED line (6-column format) either with or without the system's newline character(s) attached, return a reference to a hash keyed by field name and valued by the contents within the raw line.
+
+=head2 is_valid_bed_line
+
+if ( is_valid_bed_line( \$raw_bed_line ) { ...
+
+Given a reference to a BED line (6-column format) either with or without the system's newline character(s) attached, return a True value if the BED line is valid and is capable of correct parsing, 0 otherwise.
+
+
+=head2 read_bed_line
+
+while ( my $bed_line = read_bed_line( $bed_filehandle_ref ) ) { ...
+
+Given an opened filehandle reference (or IO::File object), return the next valid BED line in a parsed hash reference (from parse_bed_line). Skips invalid BED lines and returns EOF when the end of file is encoutnered (a false value, which terminates while loops).
+
+=head2 write_bed_line
+
+write_bed_line( $bed_filehandle_ref , $parsed_bed_line );
+
+Given an opened filehandle reference (or IO::File object) and a reference to a hash of parsed BED data (e.g. from parse_bed_line), write a BED line and a newline character (\n).
+
+=head2 count_bed_lines
+
+my $line_count = count_bed_lines( $bed_file );
+
+Given an unopened BED file as a scalar, returns a scalar of the number of lines in the BED file.
+
+=head2 extract_chromosomes
+
+my @chromosomes = extract_chromosomes( $bed_file );
+
+Given an unopened BED file as a scalar, returns an array of the unique chromosomes encoutnered in the BED file.
+
+=head2 read_in_total_coverage
+
+my $coverage = read_in_total_coverage( $bed_filehandle_ref );
+
+Given a reference to an opened filehandle to a BED file, read in the coverage in the file into a data structure and return it. The data structure is keyed by chromosome (first BED field), then by strand, (sixth BED field), then by position that has coverage.  Each position that has coverage is valued by an integer of the number of BED intervals that overlap that position (a la bedgraph format). Each position with zero coverage is uninstantiated.
+
+=head2 discover_peaks
+
+discover_peaks( $parameters );
+
+Given a hash reference to a set of required and optional parameters, perform empirical peak discovery.
+
+Required parameters:
+
+aligned_reads_files_string    A string of BED files of aligned reads. Either one BED file or a comma-separated list of BED files from individual replicates. This is the input to the permutation algorithm.
+
+transcriptome_file            A BED file (either BED6 or BED12, a la UCSC refSeq format) containing transcripts to search for peaks.
+
+iterations                    Number of iterations to use for permutation.  10 or 100 are often used.  Higher values allow deeper sampling of the prior, but at increasingly marginal return.
+
+fdr                           False discovery rate for peak calling. 0.01 or 0.001 are often used.  Lower values are more stringent and produce fewer peaks.
+
+output_file                   Otput file to write peaks to (in BED format).
+
+=head2 slice_genomic_coverage
+
+slice_genomic_coverage( $bed_file , $min_coverage , $output_file );
+
+Given a scalar BED file (e.g. containing CLIP-seq reads), a minimum coverage value, and an output file to write to, write only the intervals in the input BED file that contain maximum coverage of at least the specified value.  For example,
+
+slice_genomic_coverage( $clip_seq_reads_file , 3 , $island_with_at_least_3_reads );
+
+...Will generate a new BED file containing contiguous intervals where at least 3 reads are piled up.
+
+This is useful for joining CLIP-seq reads together into "islands" by setting the minimum coverage value to 1.
+
+=head2 widen_bed
+
+widen_bed( $bed_file , $nucleotides , $output_bed_file );
+
+Given a scalar containing a BED file to operate on, the number of nucleotides to symmetrically widen the intervals, and an output BED file to write widened intervals to, generate a new BED file containing intervals that are symmetrically widened, much like bedtools slop.  Unlike bedtools slop, a file containing the chromosome sizes for the genome of interest is not required.
+
+=head2 bedtools_intersect_u
+
+bedtools_intersect_u( $first_bed_file , $second_bed_file , $output_bed_file );
+
+Given two BED files to intersect and an output BED file to write the intersection to, call bedtools intersect with the -u option (and the -s option) to find the intersect. Intervals in the first BED file that have coverage in the second BED file are printed to the output file.
+
+=head2 bedtools_intersect_v
+
+bedtools_intersect_v( $first_bed_file , $second_bed_file , $output_bed_file );
+
+Given two BED files to intersect and an output BED file to write the negative intersection to, call bedtools intersect with the -u option (and the -s option) to find the negative intersection. Intervals in the first BED file that do NOT have coverage in the second BED file are written to the output BED file.
+
+=head2 bed_to_fa
+
+bed_to_fa( $bed_file , $genome_fasta_file , $output_fasta_file );
+
+Given a BED file to extract genomic sequences from, a FASTA file containing the sequence of the genome, and an output FASTA file to write, call bedtools getfasta.
+
+=head2 count_kmers
+
+my $counts = count_kmers( $fasta_file , $k );
+
+Given a FASTA file to count kmers in and a length of kmer (k), return a reference to a hash keyed by kmer and valued by the number of hits. Case is ignored in the input FASTA file.
+
 
 =head1 AUTHOR
 
@@ -518,7 +663,7 @@ The empirical algorithm used to discover significant CLIP-seq sites ("peaks") wa
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012,2013, and 2014 by Brian Sebastian Cole
+Copyright (c) 2012, 2013, 2014, and 2015 by Brian Sebastian Cole
 
 This library is free software; you can redistribute it and/or modify it under the same terms as Perl itself, either Perl version 5.14.2 or, at your option, any later version of Perl 5 you have available.
 

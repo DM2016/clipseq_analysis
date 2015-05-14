@@ -1,0 +1,3 @@
+chr1	900	950	upstream_peak_1	1	+
+chr1	1010	1090	within_exon_peak_1	1	+
+chr1	99	999	negative_strand_peak_1	1	-

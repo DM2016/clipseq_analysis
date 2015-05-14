@@ -1,0 +1,153 @@
+#!/bin/env perl
+
+use warnings;
+use strict;
+use autodie;
+use Getopt::Long;
+
+#Use the CLIP-seq module:
+use lib '/home/colebr/bin/clipseq_analysis/';
+use Clipseq; #Subroutines for CLIP-seq data analysis.
+
+#Given a set of intervals, write two column-delimited output files containing the total reads given in the reads.bed file (or optionally the fraction bound given peaks in a peaks.bed file) aligned in -250 to +50 for the given intervals' start and end.
+
+my $usage = <<END;
+binding_mapper: a tool to compute CLIP-seq (or CHIP-seq) binding patterns within and around exons of interest.
+Usage:
+./binding_mapper [options] -p peaks.bed exons.bed
+Options:
+-f --fraction_bound    Reports fraction bound at each position instead of total reads
+-u --upstream_file     File to report upstream coverage to. Default: input_file.upstream_map
+-d --downstream_file   File to report downstream coverage to. Default: input_file.downstream_map
+-i --intron_length     Number of nucleotides to read into the intron. Default = 250
+-n --no_strand         Ignore the strand column of the peaks file (useful for CHIP-seq peaks)
+-e --exon_length       Number of nucleotides to read into the exon. Default = 50
+END
+
+die $usage unless @ARGV;
+
+#Declare global options:
+my $fraction_bound;  #Report the fraction of intervals bound at each nucleotide instead of the total reads at each nucleotide.
+my $upstream_file;   #File to write the upstream (5') coverage to.
+my $downstream_file; #File to write the downstream (3') coverage to.
+my $peaks_file;      #For the fraction_bound mode of operation.
+my $reads_file;      #For the total_reads mode of operation.
+my $no_strand;       #Flag for ignoring strand.
+my ( $intron_length , $exon_length ) = ( 250 , 50 ); #Default operation.
+GetOptions( "upstream_file=s"   => \$upstream_file ,
+	    "downstream_file=s" => \$downstream_file ,
+	    "peaks_file=s"      => \$peaks_file ,
+	    "intron_length=i"   => \$intron_length ,
+	    "exon_length=i"     => \$exon_length ,
+	    "fraction_bound"    => \$fraction_bound ,
+	    "reads_file=s"      => \$reads_file ,
+	    "no_strand"         => \$no_strand ,
+	  );
+
+unless ( $peaks_file or $reads_file ) {
+  die "Must provide either CLIP-seq peaks to enable fraction-bound reporting or CLIP-seq reads to enable total-reads reporting.\n";
+}
+
+my $clip_file; #Check input file and set mode of operation for fraction bound or total reads.
+if ( $fraction_bound ) {
+  $clip_file = $peaks_file;
+}
+else {
+  $clip_file = $reads_file;
+}
+
+my $input_file = shift;
+#Set default output files if unspecified:
+$upstream_file   = $input_file . '.upstream_map'   unless $upstream_file;
+$downstream_file = $input_file . '.downstream_map' unless $downstream_file;
+
+open my $clip ,       "<" , $clip_file;
+open my $input ,      "<" , $input_file;
+open my $upstream ,   ">" , $upstream_file;
+open my $downstream , ">" , $downstream_file;
+
+my @fields = qw/ chrom start end name score strand /;
+
+#1: Read in all CLIP reads/peaks and increment a genomic coverage structure:
+my $clip_coverage_ref = Clipseq::read_in_total_coverage( $clip , $no_strand );
+
+#2: Read through input regions, grab interval's coordinates, increment coverage data structures:
+my @upstream_coverage;
+my @downstream_coverage;
+
+my $total_exons;
+while ( my $line = Clipseq::read_bed_line( $input ) ) {
+  $total_exons++;
+
+  my ( $upstream_start , $upstream_end , $downstream_start , $downstream_end );
+  if ( $line->{strand} eq "+" ) {
+    $upstream_start   = $line->{start} - $intron_length;
+    $upstream_end     = $line->{start} + $exon_length;
+    $downstream_start = $line->{end}   - $exon_length;
+    $downstream_end   = $line->{end}   + $intron_length;
+  }
+  elsif ( $line->{strand} eq "-" ) {
+    $upstream_start   = $line->{end}   + $intron_length;
+    $upstream_end     = $line->{end}   - $exon_length;
+    $downstream_start = $line->{start} - $intron_length;
+    $downstream_end   = $line->{start} + $exon_length;
+  }
+
+  for my $pos ( $upstream_start   .. $upstream_end ) { #Genomic coordinates
+    my $index = $pos - $upstream_start; #Should be 0 .. ( $intron_length + $exon_length )
+    my $cov;
+    unless ( $no_strand ) { #Strand-specific operation, e.g. for CLIP-seq peaks.
+      $cov = $clip_coverage_ref->{ $line->{chrom} }{ $line->{strand} }{ $pos };
+    }
+    else { #Ignore strand. Genome coverage structure will have no strand level.
+      $cov = $clip_coverage_ref->{ $line->{chrom} }{ $pos };
+    }
+    next unless $cov;
+    if ( $fraction_bound ) {
+      $upstream_coverage[$index]++;
+    }
+    else {
+      $upstream_coverage[$index] += $cov;
+    }
+  }
+
+  for my $pos ( $downstream_start .. $downstream_end ) {
+    my $index = $pos - $downstream_start;
+    my $cov;
+    unless ( $no_strand ){
+      $cov = $clip_coverage_ref->{ $line->{chrom} }{ $line->{strand} }{ $pos };
+    }
+    else {
+      $cov = $clip_coverage_ref->{ $line->{chrom} }{ $pos };
+    }
+    next unless $cov;
+    if ( $fraction_bound ) {
+      $downstream_coverage[$index]++;
+    }
+    else {
+      $downstream_coverage[$index] += $cov;
+    }
+  }
+}
+
+#Postprocessing of coverage data structures: setting unseen nucletodies to zero, and if fraction-bound is enabled, replace the total-bound value by the fraction of intervals bound:
+my $interval_length = $intron_length + $exon_length; #Default is a 300nt interval.
+for ( 0 .. $interval_length ) {
+  $upstream_coverage[   $_ ] or $upstream_coverage[   $_ ] = 0;
+  $downstream_coverage[ $_ ] or $downstream_coverage[ $_ ] = 0;
+  if ( $fraction_bound ) { #divide by total exons
+    $upstream_coverage[   $_ ] /= $total_exons;
+    $downstream_coverage[ $_ ] /= $total_exons;
+  }
+}
+
+#3: Print output in 2-column TSV, header first:
+$fraction_bound ? print  {$upstream}  "pos\tfraction_bound\n" : print  {$upstream}  "pos\tcoverage\n";
+$fraction_bound ? print {$downstream} "pos\tfraction_bound\n" : print {$downstream} "pos\tcoverage\n";
+
+for ( 0 .. $interval_length ) {
+  my $upstream_position   = -1 * $intron_length + $_; #-250 to +50 in default mode
+  my $downstream_position = -1 * $exon_length  + $_; #-50 to +250 in default mode
+  print  {$upstream}  "$upstream_position\t$upstream_coverage[$_]\n";
+  print {$downstream} "$downstream_position\t$downstream_coverage[$_]\n";
+}

@@ -1,0 +1,134 @@
+#!/usr/bin/env perl
+
+use warnings;
+use strict;
+use autodie;
+use Carp;
+use Getopt::Long;
+
+#Extract fractions of sequences in multiple FASTA files that contain each kmer. Upcase all kmers and skip any that contain "N" nucleotides.
+
+my $usage = <<'END';
+compare_fasta_kmers: compares fractions of FASTA input sequences that contain each kmer encountered in any of the input FASTA files.
+
+Usage:
+./compare_fasta_kmers [options] -i input.fa<,input2.fa,...> -o output.tsv
+
+Options:
+-i  --input_files         An input FASTA file or comma-separated list of FASTA files to process. Required argument.
+-o  --output_file         An output TSV file to write to.
+-k  --kmer_length         An positive integer representing the length of kmer to extract and compare. Default: 6
+                          NOTE: sequences with length < k are ignored.
+-v  --verbose             Boolean indicating verbose operation. Default: FALSE
+-h  --help                Print this usage message and exit.
+END
+
+#Set default options:
+my $params = { 'input_files' => '' ,
+	       'kmer_length' => 6  , #Set default kmer to hexamer.
+	       'verbose'     => 0  , #Default to quiet operation.
+	       'output_file' => '' };
+
+GetOptions( "input_files=s" => \$params->{input_files} ,
+	    "kmer_length=i" => \$params->{kmer_length} ,
+	    "verbose"       => \$params->{verbose}     ,
+	    "output_file=s" => \$params->{output_file} );
+
+die "No input files provided.\n$usage" unless $params->{input_files};
+
+unless ( ( $params->{kmer_length} >= 0 ) && ( $params->{kmer_length} =~ /^[0-9]+$/ ) ) {
+  die "Invalid kmer length provided: must be a positive integer.\n\n$usage";
+}
+
+sub count_kmers {
+  #Given a FASTA file name and a kmer length to extract, return a reference to a hash of each kmer encountered within the file scored by the frequency. Zero-frequency kmers are not instantiated.
+  my ( $input_file , $kmer_length ) = @_;
+  my %kmers; #A hash keyed by kmer and valued by the number of input sequences that contain the kmer.
+  my $total_sequences = 0;
+  open my $in , "<" , $input_file or carp "Failed to open $input_file: $!\n";
+  while ( <$in> ) {
+    chomp;
+    next unless /^[ACTGN]+$/i; #Skip non-sequence lines. Assumes the entire FASTA sequence is present in one line, not in 80-character lines that allow a sequence to span multiple lines.
+    $total_sequences++;
+
+    next if length $_ < $kmer_length; #Skip sequences that are too short to extract kmers of the specified length from.
+    my %kmers_in_current_sequence;
+    for my $position ( 0 .. ( length($_) - $kmer_length ) ) {
+      my $kmer = uc( substr( $_ , $position , $kmer_length ) );
+      next if $kmer =~ /N/;
+      $kmers_in_current_sequence{ $kmer } = 1;
+    }
+    for my $kmer_in_current_sequence ( keys %kmers_in_current_sequence ) {
+      $kmers{$kmer_in_current_sequence}++;
+    }
+  }
+  return ( \%kmers , $total_sequences );
+}
+
+sub extract_unique_kmers_from_input_files {
+  #Given a scalar argument of input FASTA files to process, extract the unique kmers encountered in any file and return a reference to a hash.
+  my %unique_kmers;
+  for my $input_file ( split /,/ , $params->{input_files} ) {
+    my ( $kmer_counts , $total_sequences ) = count_kmers( $input_file , $params->{kmer_length} );
+    for my $kmer ( keys %$kmer_counts ) {
+      $unique_kmers{ $kmer } = 1;
+    }
+  }
+  return \%unique_kmers;
+}
+
+sub main {
+  #First, extract the unique kmers encountered in any of the input files. Then, print a TSV output of the fraction of the input sequences that contain each kmer.
+  my $unique_kmers = extract_unique_kmers_from_input_files();
+  my %output; #A hash keyed by each unique kmer, valued by a reference to an array of the fraction of the input sequences that contain each kmer in each input file, in the order the specified.
+  for my $kmer ( keys %$unique_kmers ) {
+    $output{$kmer} = []; #Instantiate an array reference.
+  }
+
+  for my $file ( split /,/ , $params->{input_files} ) {
+    my ( $kmer_counts , $total_sequences ) = count_kmers( $file , $params->{kmer_length} );
+    for my $kmer ( keys %$unique_kmers ) {
+      my ( $hits , $misses , $fraction );
+      if ( $kmer_counts->{$kmer} ) {
+	$fraction = $kmer_counts->{$kmer} / $total_sequences;
+	$hits     = $kmer_counts->{$kmer};
+	$misses   = $total_sequences - $hits;
+      }
+      else {
+	$fraction = 0;
+	$hits     = 0;
+	$misses   = $total_sequences;
+      }
+      push @{$output{$kmer}} , ( $hits , $misses , $total_sequences , $fraction );
+    }
+  }
+
+  #Print output:
+  if ( $params->{output_file} ) {
+    open my $output , ">" , $params->{output_file};
+    print {$output} "kmer";
+    for my $file ( split /,/ , $params->{input_files} ) {
+      print {$output} "\thits_in_" . $file , "\tmisses_in_" . $file , "\ttotal_sequences_in_" . $file , "\tfraction_with_hits_in_" . $file;
+    }
+    print {$output} "\n";
+    for my $kmer ( keys %output ) {
+      print {$output} $kmer , "\t";
+      print {$output} join "\t" , @{$output{$kmer}};
+      print {$output} "\n";
+    }
+  }
+  else {
+    print "kmer";
+    for my $file ( split /,/ , $params->{input_files} ) {
+      print "\t" , $file;
+    }
+    print "\n";
+    for my $kmer ( keys %output ) {
+      print $kmer , "\t";
+      print join "\t" , @{$output{$kmer}};
+      print "\n";
+    }
+  }
+}
+
+main();

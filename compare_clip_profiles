@@ -1,0 +1,270 @@
+#!/usr/bin/env perl
+
+use warnings;
+use strict;
+use autodie;
+use feature qw/ state switch say /;
+use Carp;
+use Getopt::Long;
+
+#Predeclare strings for usage (including options), version, and license string.
+my $usage = <<'END';
+Usage:
+./compare_clip_profiles -a profile_1.bed -b profile_2.bed -t transcriptome.bed -o output.tsv
+Compare the overlap between 2 CLIP-seq profiles to that expected by random chance using within-transcript randomizations inside the provided transcriptome.
+All files must be provided in BED format.  BED12 format is allowed by columns beyond 6 are not utilized.
+Options:
+-a    --a_file                The first input CLIP-seq intervals file (peaks, e.g.).
+-b    --b_file                The second input CLIP-seq intervals file.
+-t    --transcriptome_file    The transcriptome within which to compare the two binding profiles.
+-m    --max_rand_attempts     The maximum number of times to attempt rerandomizing an interval. Prevents infinite rerandomization. Default: 100.
+      --verbose               Set verbose mode of operation. Default: FALSE.
+      --version               Print version information and exit successfully.
+-l    --license               Print license information and exit successfully.
+
+See the embedded documentation with `perldoc compare_clip_profiles` for more information.
+END
+
+my $version_string = <<'END';
+compare_clip_profiles version 0.01
+END
+
+my $license_string = <<'END';
+This program is free software: you are free to distribute under the terms of the license included with your Perl distribution, or, at your option, any future Perl license.
+END
+
+#Collect options.
+my ( $a_file , $b_file , $transcriptome_file ); #Required arguments.
+my $max_rand_attempts = 100; #Default argument.
+my $verbose = 0; #Default to quiet operation.
+my ( $version , $license ); #Arguments to die for.
+
+GetOptions( "a_file=s" => \$a_file , "b_file=s" => \$b_file , "transcriptome_file=s" => \$transcriptome_file ,
+	    "version" => \$version , "license" => \$license , "max_rand_attempts=i" => \$max_rand_attempts , "verbose" => \$verbose );
+
+#Validate invocation:
+if ( $version ) {
+  print $version;
+  exit;
+}
+
+if ( $license ) {
+  print $license;
+  exit;
+}
+
+unless ( -f $a_file and -f $b_file and -f $transcriptome_file ) {
+  die "One of the three required files does not exist.  Fatal death by dying.\n$usage";
+}
+
+unless ( $max_rand_attempts > 0 and $max_rand_attempts < 1_000_000_000_000_000_000 ) { #Pretty big ceiling here, let's round it up to infinity.
+  die "Invalid maximum randomization attempts value provided.  Must be a positive integer but less than infinity.\n";
+}
+
+#Global values:
+my @bed_fields = qw/ chrom start end name score strand /;
+
+#Subroutine definitions:
+
+#Usage: my $parsed_line = parse_bed_line( \$chomped_bed_line );
+sub parse_bed_line {
+  #Given a chomped scalar line containing bed data, return a reference to a parsed hash of the line's contents.
+  my $line_to_parse = shift;
+  my %parsed_line;
+  @parsed_line{@bed_fields} = split /\t/ , $line_to_parse;
+  return \%parsed_line;
+}
+
+#Usage: my $parsed_bed_line = get_next_bed_line( $bed_filehandle_reference );
+sub get_next_bed_line {
+  #Given a scalar reference to an opened filehandle to an existing BED file, read one line from the filehandle, chomp it, parse it into a hash, and return a reference to the hash.
+  my $bed_filehandle_reference = shift;
+  my $raw_line = <$bed_filehandle_reference>;
+  return $raw_line unless $raw_line; #Return EOF to terminate a while loop.
+  chomp( $raw_line );
+  return parse_bed_line( $raw_line );
+}
+
+#Usage: my $bed_coverage = read_bed_file( $bed_file_name );
+sub read_bed_file_coverage {
+  #Given a scalar value containing an existing BED file, read in the entire contents of the BED file into a hierarchical hash structure keyed by chromosome then by strand then by positions that have coverage.
+  #Return a reference to this data structure.
+  my $bed_file_to_read = shift;
+  open my $beddy , "<" , $bed_file_to_read or croak "Failed to open $bed_file_to_read to extract its contents. System says: $!\n";
+  my $bed_contents;
+  while ( my $current_line = get_next_bed_line( $beddy ) ) {
+    $bed_contents->{ $current_line->{chrom} }{ $current_line->{strand} }{$_}++ for $current_line->{start} .. $current_line->{end};
+  }
+  return $bed_contents;
+}
+
+#Usage: my $bed_contents = read_bed_file_into_structure( $bed_file_name );
+sub read_bed_file_into_structure {
+  #Given a scalar value containing an existing BED file, read in the contents of the BED file into a hierarchical data structure keyed by chromosome then by strand, valued by an array of references to hashes of the BED values for start, end, name, and score.
+  #Return a reference to the data structure.
+  #The point of this structure is to preven the need to iterate over every interval in a data structure in a nested manner.
+  my $bed_file_to_read = shift;
+  my %contents;
+  open my $bed_reading , "<" , $bed_file_to_read or croak "Failed to open $bed_file_to_read to extract its contents. System says: $!\n";
+  while ( my $line = get_next_bed_line( $bed_reading ) ) {
+    push @{ $contents{ $line->{chrom} }{ $line->{strand} } } , { 'start' => $line->{start} , 'end' => $line->{end} , 'name' => $line->{name} , 'score' => $line->{score} };
+  }
+  #That above line translates to: push a reference to a hash of start, end, name, and score onto the array referenced by the current line's chromosome and strand.
+  #Have fun dereferencing that one. This should really be an object that is accessed through object methods rather than a data structure that needs to be laboriously and hideously dereferenced.
+  return \%contents;
+}
+
+#Usage: my $bed_array = read_bed_file_into_array( \$bed_file_name );
+sub read_bed_file_into_array {
+  #Given a scalar value containing an existing BED file, read in the contents of the BED file into a simple array of parsed BED lines. Return a reference to the array. Nice and simple.
+  my $bed_file_to_read = shift;
+  my @contents;
+  open my $bed_reader , "<" , $bed_file_to_read or croak "Failed to open $bed_file_to_read to extract its contents. System says: $!\n";
+  while ( my $line_read = get_next_bed_line( $bed_reader ) ) {
+    push @contents , $line_read;
+  }
+  return \@contents;
+}
+
+#Usage: $shared_peaks++ if is_covered( $peak , $coverage , $chromosome_to_check , $strand_to_check );
+sub is_covered {
+  #Return the area under the curve of the coverage hash within the interval provided: a true value denotes coverage.
+  #Takes 2 arguments: the first is a reference to a peak (four item hashref) and the second is a reference to a coverage hash structure.
+  my ( $peak_reference , $coverage_hash , $current_chromosome , $current_strand ) = @_;
+  my $total_coverage_in_peak = 0;
+  for my $nt ( $peak_reference->{start} .. $peak_reference->{end} ) {
+    if ( $coverage_hash->{ $current_chromosome }{ $current_strand }{ $nt } ) { #If there's coverage at this nucleotide within the peak...
+      $total_coverage_in_peak += $coverage_hash->{ $current_chromosome }{ $current_strand }{ $nt };
+    }
+  }
+  return $total_coverage_in_peak;
+}
+
+#Usage: my $line_count = count_lines( $file_to_count );
+sub count_lines {
+  my $file_to_count = shift;
+  my $line_count = 0;
+  open my $counting , "<" , $file_to_count or croak "Failed to open $file_to_count to count its lines. System says: $!\n";
+  $line_count++ while <$counting>;
+  return $line_count;
+}
+
+#Usage: my $random_start_coordinate = get_random_start_coordinate( $peak , $transcript );
+sub get_random_start_coordinate {
+  #Given a refrence to a peak and a reference to a transcript that contains the peak, generate a random start coordinate for that peak within that transcript.
+  my ( $peak_to_randomize , $transcript_within_which_to_randomize ) = @_; #These names are getting ridiculous.  I'm playing namespace dodgeball at this point. Perl warns on rebinding names and I don't want to disable any warnings.
+  my $length = $peak_to_randomize->{end} - $peak_to_randomize->{start};
+  my $last_mappable_position = $transcript_within_which_to_randomize->{end} - $length; #No need to subtract 1 because rand() generates a random number less than its argument.
+  my $zero_index_end = $last_mappable_position - $transcript_within_which_to_randomize->{start}; #Convert to zero-based index for easy randomization.
+  return $transcript_within_which_to_randomize->{start} + int( rand( $zero_index_end ) ); #Restore the coordinate system of the transcript.
+}
+
+#Usage: my @randomized_peaks_in_transcript = randomize_peaks_in_transcript( $transcript , \@peaks_in_transcript );
+sub randomize_peaks_in_transcript {
+  #Given a reference to a transcript and a reference to an aray of peaks within that transcript, randomize each peak within that transcript and return a reference to an array of randomized peaks.
+  #If during the randomization of any peak within the transcript an overlap with an already randomized peak is encountered, try again until the max_rand_attempts is hit.
+  #If max_rand_attempts is hit, return nothing.
+
+  my ( $transcripty , $peaks_in_transcripty ) = @_; #Don't clobber the names 'transcript' and 'peaks_in_transcript' in the caller's namespace.
+  my $randomized_coverage; #Increment in the original coordinate space to keep track of randomized intervals.
+  my @randomized_peaks;
+  $randomized_coverage->{ $transcripty->{chrom} }{ $transcripty->{strand} } = {}; #Predeclare the levels of this structure for the first time the is_covered() subroutine is called.
+  for my $peaky ( @$peaks_in_transcripty ) {
+    my $length = $peaky->{end} - $peaky->{start};
+
+    my $failed_randomizations = 0; #Start trying to place this guy.
+  RANDOMIZATION: {
+
+      my $random_start_coordinate = get_random_start_coordinate( $peaky , $transcripty );
+      my $randomized_peak = { 'start' => $random_start_coordinate , 'end' => $random_start_coordinate + $length , 'name' => 'Socrates_if_you_please' , 'score' => 42 };
+      #Check to see if this peak overlaps an already randomized peak.  If it does, rerandomize and increment the rerandomization count.  If not, increment the random coverage and continue.
+      if ( is_covered( $randomized_peak , $randomized_coverage , $transcripty->{chrom} , $transcripty->{strand} ) ) {
+	#Peak overlaps a previously randomized peak. Check to see whether the rerandomization count exceeds the max_rand_attempts variable.
+	if ( $failed_randomizations == $max_rand_attempts ) {
+	  $verbose and warn "Failed rerandomizing a peak within transcript $transcripty->{name}: maximum randomization limit exceeded.\n";
+	  return []; #Failure to randomize peaks within transcript - empty array reference return value.
+	}
+	else {
+	  $failed_randomizations++;
+	  redo RANDOMIZATION;
+	}
+      }
+      else { #Randomized peak is clean. Increment the randomized_coverage hash.
+	$randomized_coverage->{ $transcripty->{chrom} }{ $transcripty->{strand} }{ $_ }++ for $random_start_coordinate .. $random_start_coordinate + $length;
+	push @randomized_peaks , $randomized_peak;
+      }
+    } #End of RANDOMIZATION naked block.
+  }
+  return \@randomized_peaks;
+}
+
+sub main {
+  #Main program.
+  #1: Read the b file into a hash of coverage.
+  #2: Read the a file into a genomic structure for easy iteration over strands.
+  #3: Read the transcriptome file into an array of parsed BED lines.
+  #4: Iterate through each transcript. For each transcript, collect the peaks within that transcript (start of peak is greater than start coord of transcript, peak end is less than transcript end).
+  #5: Count how many of the peaks within the trancript have coverage in the b file's coverage hash.
+  #6: Randomize each peak within the current transcript.
+  #7: Count how many of the randomized peaks have coverage in the b file's coverage hash.
+
+  my $coverage    = read_bed_file_coverage( $b_file );
+  $verbose and say "Finished reading coverage from $b_file.";
+  my $peaks       = read_bed_file_into_structure( $a_file ); #The choice of the variable name "peaks" reflects this program's original intended use but does not limit its application.
+  $verbose and say "Finished reading data structure from $a_file.";
+  my $transcripts = read_bed_file_into_array( $transcriptome_file );
+  $verbose and say "Finished reading transcriptome from $transcriptome_file.";
+
+  #Some things to keep track of:
+  my ( $observed_shared_peaks   , $observed_nonshared_peaks   ) = ( 0 , 0 ); #Love that codemoji.
+  my ( $randomized_shared_peaks , $randomized_nonshared_peaks ) = ( 0 , 0 );
+  my ( $transcripts_with_peaks  , $transcripts_with_no_peaks  ) = ( 0 , 0 );
+  my ( $successful_randomized_transcripts , $unsuccessful_randomized_transcripts , $total_transcripts ) = ( 0 , 0 , 0 );
+  my $total_peaks_in_transcripts = 0;
+
+
+  for my $transcript ( @$transcripts ) {
+    $total_transcripts++;
+
+    #Collect peaks in the transcript:
+    my @peaks_in_transcript;
+    for my $peak ( @{ $peaks->{ $transcript->{chrom} }{ $transcript->{strand} } } ) { #Iterates over peaks on the same strand of the same chromosome as the transcript.
+      if ( $peak->{start} > $transcript->{start} and $peak->{end} < $transcript->{end} ) { #Prevents infinite rerandomization attempts as the peak must be wholly contained within the transcript.
+	push @peaks_in_transcript , $peak; #Save this peak for randomization.
+	$total_peaks_in_transcripts++;
+	is_covered( $peak , $coverage , $transcript->{chrom} , $transcript->{strand} ) ? $observed_shared_peaks++ : $observed_nonshared_peaks++; #Check to see whether this peak is shared or unshared.
+      }
+    }
+    unless ( @peaks_in_transcript ) {
+      $transcripts_with_no_peaks++;
+      next;
+    }
+    else {
+      $transcripts_with_peaks++;
+    }
+
+    #Randomize the peaks in this transcript, generating an array of permuted peaks otherwise identical to the @peaks_in_transcript array.
+    my $randomized_peaks_in_transcript = randomize_peaks_in_transcript( $transcript , \@peaks_in_transcript );
+    unless ( @$randomized_peaks_in_transcript ) { #Empty return value denotes randomization failure.
+      warn "Failed to randomize peaks in transript $transcript->{name}. Skipping transcript and not counting the peaks in this transcript toward randomized overlap.\n";
+      $unsuccessful_randomized_transcripts++;
+    }
+    else {
+      $successful_randomized_transcripts++;
+    }
+
+    for my $randomized_peak ( @$randomized_peaks_in_transcript ) {
+      is_covered( $randomized_peak , $coverage , $transcript->{chrom} , $transcript->{strand} ) ? $randomized_shared_peaks++ : $randomized_nonshared_peaks++;
+    }
+  } #On to the next transcript.
+
+  $verbose and say "Program complete. Out of $total_transcripts total transcripts, $transcripts_with_peaks had intervals from $a_file and $transcripts_with_no_peaks had none.";
+  $verbose and say "Of the transcripts that had intervals, $successful_randomized_transcripts successfully completed randomization and $unsuccessful_randomized_transcripts failed to randomize within the provided rerandomized limit.";
+
+  #Print output header:
+  say join "\t" , ( "Total transcriptome-overlapping peaks in $a_file:" , "Peaks with coverage in $b_file:" , "Randomized peaks with coverage in $b_file:" );
+
+  say join "\t" , ( $total_peaks_in_transcripts , $observed_shared_peaks , $randomized_shared_peaks );
+}
+
+main();

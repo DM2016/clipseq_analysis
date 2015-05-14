@@ -1,0 +1,163 @@
+#!/usr/bin/perl -w
+
+##################################################################
+# discover_peaks: a CLIP-seq analysis pipeline.                  #
+# Consult the POD documentation like this:                       #
+# $ perldoc Clipseq.pm                                           #
+##################################################################
+
+use strict;
+use warnings;
+use Clipseq; 
+use Getopt::Long;
+
+#Set keyword (default) arguments:
+my $replicate_strategy = 'pooled'; #Default to pooled peak calling.
+my $iterations         = 100;      #100 iterations of randomization.
+my $fdr                = 0.01;     #False discovery rate cutoff for peaks. Lower value is more stringent.
+my $help               = 0;        #Flag for printing help message and exiting.
+my $log_file           = '';       #File to write log to.
+my $verbose            = 0;        #Flag for verboseness.
+
+#Declare positional (required) arguments:
+my ( $aligned_reads_files_string , $transcriptome_file , $output_file );
+
+
+#Collect options:
+my $usage   = "Discovery of CLIP-seq peaks by an empirical randomized algorithm.\nUsage: ./discover_peaks -a replicate_1.bed[,replicate_2.bed,...] -t transcriptome.bed <-i iterations> <-f fdr> -o output_file.bed\n";
+my $options = "Options:\n-a\t--aligned_reads_files\tComma-separated list of aligned reads to search for peaks (required).\n" .
+              "-t\t--transcriptome_file\t\tA BED or BED12 formatted transcriptome file of transcripts to search for peaks (required).  E.g. refSeq knownGene.\n" .
+              "-o\t--output_file\t\tDestination for the output file, written in BED format (required).\n" .
+              "-i\t--iterations\t\tNumber of iterations to randomize observed alignemnt coordinates within transcript to estimate significance. Default = 100\n" .
+              "-f\t--fdr\t\t\tFalse discovery rate cutoff. Lower value is more stringent. Default = 0.01\n" .
+              "-p\t--pooled\t\tPooled replicate strategy for when replicates are called.\n" .
+              "-l\t--log_file\t\tFile to write pipeline log to. Default = none.\n" .
+              "-v\t--verbose\t\tSet verbose operation: pipeline will report on progress via STDERR. Default = FALSE.\n" .
+              "-h\t--help\t\t\tPrint this help message.\n";
+              
+unless ( @ARGV ) {
+  die "$usage\n$options";
+}
+
+die "Failed to collect arguments: $!\n" unless GetOptions( "replicate_strategy=s"  => \$replicate_strategy ,
+							   "iterations=i"          => \$iterations ,
+							   "fdr=f"                 => \$fdr ,
+							   "help"                  => \$help ,
+							   "aligned_reads_files=s" => \$aligned_reads_files_string ,
+							   "transcriptome_file=s"  => \$transcriptome_file ,
+							   "output_file=s"         => \$output_file ,
+							   "log_file=s"            => \$log_file ,
+							   "verbose"               => \$verbose );
+
+#Validate arguments:
+if ( $help ) {
+  die "$usage\n$options";
+}
+unless ( $aligned_reads_files_string && $transcriptome_file && $output_file ) {
+  die "Need aligned reads file(s), a transcriptome file, and an output file.\n$usage\n$options";
+}
+
+#Validate aligned reads files (format is valid):
+#  To implement!
+
+#Validate transcriptome files (format is valid):
+#  To implement!
+
+
+#To-do: collect this hash directly from GetOptions.
+my $parameters = { 'iterations'                 => $iterations ,
+                   'fdr'                        => $fdr ,
+                   'aligned_reads_files_string' => $aligned_reads_files_string ,
+                   'transcriptome_file'         => $transcriptome_file ,
+                   'output_file'                => $output_file ,
+                   'log_file'                   => $log_file ,
+                   'verbose'                    => $verbose };
+
+if ( $replicate_strategy eq 'pooled' ) {
+  $verbose and warn "Beginning pipeline.\n";
+  my $start_time = time();
+
+  Clipseq::discover_peaks( $parameters );
+
+  if ( $verbose ) {
+    my $end_time = time();
+    my $run_time = $end_time - $start_time;
+    warn "Pipeline complete. Elapsed time: $run_time seconds.\n";
+  }
+}
+
+__END__
+
+=head1 NAME
+
+discover_peaks - Perl pipeline for the identification of signficant protein-RNA interaction sites from CLIP-seq data.
+
+=head1 SYNOPSIS
+
+discover_peaks -a aligned_reads.bed -t transcriptome_to_search.bed -o peaks.bed
+
+=head1 DESCRIPTION
+
+This program provides a pipeline to identify significant protein-RNA interaction sites within annotated transcripts using CLIP-seq data.  The permutation algorithm developed by Yeo et al is used to establish a prior distribution for aligned CLIP-seq reads forming overlaps of each height in each transcript in the provided annotation set, given the number and length of CLIP-seq reads that align to that transcript.
+
+For a summary of required and optional arguments, invoke discover_peaks from the command line.
+
+=head1 USAGE
+
+This program requires three arguments: aligned CLIP-seq reads to search for peaks, a transcriptome annotation containing transcripts in which to search for peaks, and an output file to report peaks to.  See SYNOPSIS for a barebones invocation.
+
+=head1 OPTIONS
+
+Required (positional) arguments, which may be shortened to single letters:
+
+-a  --aligned_reads       A file containing aligned CLIP-seq reads, or a comma-separated string of file names.
+
+-t  --transcriptome       A file containing transcripts to search for peaks.  Aligned reads outside of the transcriptome are not searched because the permutation algorithm requires a transcript start and end coordinate to constrain permutation of aligned reads.
+
+-o  --output_file         A file name to output peaks to in BED format.
+
+Optional (keyword) arguments, including their default values:
+
+-i  --iterations          Number of iterations to use for permutation of aligned CLIP-seq reads within each transcript to establish prior distribution of peak heights.  This is used to establish the significance of the observed CLIP-seq regions. The default value is 100, which is a moderately deep sampling of the prior.  Setting to a lower value such as 10 will improve execution time, but increasing to a larger value will only increase execution time at a sublinear rate.  See PERFORMANCE for details.
+
+-f  --fdr                 False discovery rate below which a region of CLIP-seq coverage is called a peak.  Lower is more stringent.  Default value is 0.01.
+
+-h  --help                Print a usage message and exit the program.  Also simply run the program with no arguments to get the help message.
+
+-l  --log_file            Print detailed pipeline information to a log file. Useful for debugging and also quality control. Default = no logging.
+
+-v  --verbose             Periodically report the pipeline's progress on STDERR. Useful to monitor the pipeline's progress in real time, or by directing the STDERR output stream to a file to monitor progress.
+
+-r  --replicate_strategy  Replicate strategy for if replicates are provided via a comma-separated list of input files.  The default value is 'pooled', which first pools all replicates before permutation begins.  Other options are currently under development, including the incorporation of replicate requirements within a sample group.
+
+=head1 DEPENDENCIES
+
+This program does not require modern Perl features that were made available after version 5.10.1 to retain backwards compatibility for older computing systems.
+
+This program requires bedtools to be installed and accessible to the operating system (e.g. GNU/Linux operating systems, the bedtools must be in a directory in the $PATH environment variable).  Bedtools is used to perform rapid genome arithmetic.  Future releases may relax this dependency using pure perl implementations of genome arithmetic operations at the cost of execution speed.
+
+Currently only BED format is supported for transcriptome and aligned reads files.  This will change in future releases.
+
+=head1 PERFORMANCE
+
+This program uses data structures that divide the genome into individual strands of each chromosome that is extracted from the provided transcriptome.  This drastically reduces the required memory at the expense of compute time, however increasing the iterations for permutation of alignments occurs within each strand of each chromosome, so no additional computation is needed to extract reads and transcripts.
+
+=head1 AUTHOR
+
+Brian Sebastian Cole, E<lt>colebr@mail.med.upenn.eduE<gt>
+
+=head1 DEVELOPMENT
+
+This software was developed under the support of the author's thesis advisor Dr. Kristen W. Lynch, PhD, at the Raymond and Ruth Perelman School of Medicine, University of Pennyslvania, Philadelphia, Pennsylvania.  The author was (and might still be) a PhD candidate in the Cell and Molecular Biology graduate group, and the advisor was (and might still be) Professor of Biochemistry and Molecular Biophysics.
+
+Development was conducted with Perl version 5.10.1 (system), and version 5.14.2 (home).  Programming was performed in GNU emacs version 23.1.1 with the cperl editing mode.  Computation and testing was performed on the Penn Medicine Academic Computing Services high performance compute cluster, using CLIP-seq data from the author and the advisor among previously published CLIP-seq experiments with raw data available in the public domain at NCBI SRA.
+
+The author is indebted to the support of the PMACS systems administrators, especially Anand Srinivasan, and also to the Philadelphia Perl Mongers for helpful recommendations about code profiling during a presentation by the author.
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2012,2013, and 2014 by Brian Sebastian Cole
+
+This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself, either Perl version 5.14.2 or, at your option, any later version of Perl 5 you have available.
+
+=cut

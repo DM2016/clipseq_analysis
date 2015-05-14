@@ -52,6 +52,9 @@ die "$binding_sites_BED_file: not a file, dying.\n"     unless -f $binding_sites
 die "$bound_transcripts_BED_file: not a file, dying.\n" unless -f $bound_transcripts_BED_file;
 die "$genome_fasta_file: not a file, dying.\n"          unless -f $genome_fasta_file;
 
+#Validate number of iterations:
+die "Invalid number of iterations: must be a positive integer greater than or equal to 3 (for standard deviations).\n" unless $i >= 3;
+
 my @chromosomes = Clipseq::extract_chromosomes( $bound_transcripts_BED_file ); #Extract chromosomes to iterate over.
 
 open my $out , ">" , $output_file;

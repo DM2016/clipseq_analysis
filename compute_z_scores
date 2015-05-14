@@ -5,7 +5,6 @@ use strict;
 use autodie;
 use Getopt::Long;
 use Clipseq;
-use Z_score;
 
 #Given a BED file of binding sites and a BED file of bound transcripts, report a sorted list of kmers with their frequency in the binding sites, their z-score, their mean frequency in randomized intervals from the bound transcripts, and the standard deviation of the mean frequency in randomized intervals for the bound transcripts.
 

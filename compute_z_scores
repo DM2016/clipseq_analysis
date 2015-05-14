@@ -25,7 +25,7 @@ use Clipseq;
 # Parse command line options with GetOptions:
 my $verbose = '';  #Default is quiet operation, overridden with --verbose or -v
 my $k       = 6;   #Default to hexamer analysis, overridden with -k 5 (e.g.)
-my $i       = 100; #Default to 100 iterations for randomization of binding sites (should make normal distribution of frequencies across iterations).
+my $i       = 10;  #Default to 10 iterations for randomization of binding sites.
 my $retries = 10;  #Default to maximum of 10 retries for failed randomizations.
 
 die "Failed to parse options: $!\n" unless GetOptions( 'verbose'   => \$verbose ,
@@ -35,21 +35,22 @@ die "Failed to parse options: $!\n" unless GetOptions( 'verbose'   => \$verbose 
 						     );
 
 my $usage = <<'And that is the usage.';
-compute_z_scores [options] BED_file_of_binding_sites BED_file_of_bound_transcripts output_file
+compute_z_scores [options] BED_file_of_binding_sites BED_file_of_bound_transcripts genome_fasta_file output_file
 Options:
 -v    --verbose    Set verbose operation.
 -k                 Set kmer length. Default: 6
--i                 Iteration number for randomizations. Default: 100
+-i                 Iteration number for randomizations. Each iteration beyond 1 is a complete oversampling. Default: 10
 -r    --retries    Maximum number of rerandomizations. Default: 10
 And that is the usage.
 
-die $usage unless @ARGV == 3;
+die $usage unless @ARGV == 4;
 
-my ( $binding_sites_BED_file , $bound_transcripts_BED_file , $output_file ) = @ARGV;
+my ( $binding_sites_BED_file , $bound_transcripts_BED_file , $genome_fasta_file , $output_file ) = @ARGV;
 
-#Check the two input files.  Clobber the output file quietly if it exists.
+#Check the three input files.  Clobber the output file quietly if it exists.
 die "$binding_sites_BED_file: not a file, dying.\n"     unless -f $binding_sites_BED_file;
 die "$bound_transcripts_BED_file: not a file, dying.\n" unless -f $bound_transcripts_BED_file;
+die "$genome_fasta_file: not a file, dying.\n"          unless -f $genome_fasta_file;
 
 my @chromosomes = Clipseq::extract_chromosomes( $bound_transcripts_BED_file ); #Extract chromosomes to iterate over.
 
@@ -60,9 +61,9 @@ my @bed_fields = qw/ chrom start end name score strand /;
 #0: Populate the %observed_kmer_frequency hash
 #    First, convert the $binding_sites_BED_file to a FASTA file
 my $binding_sites_FASTA_file = $binding_sites_BED_file . '.fa';
-Z_score::bed_to_fa( $binding_sites_BED_file , $binding_sites_FASTA_file ); #no filehandle is open to binding_sites_BED_file
+Clipseq::bed_to_fa( $binding_sites_BED_file , $genome_fasta_file , $binding_sites_FASTA_file ); #no filehandle is open to binding_sites_BED_file
 #    Then, count the kmers in it.  Stash them in a hash of their frequencies.
-my $observed_kmer_frequencies = Z_score::count_kmers( $binding_sites_FASTA_file , $k ); #closes filehandle inside count_kmers
+my $observed_kmer_frequencies = Clipseq::count_kmers( $binding_sites_FASTA_file , $k ); #closes filehandle inside count_kmers
 
 unlink $binding_sites_FASTA_file; #clean up
 
@@ -189,7 +190,7 @@ if ( $verbose ) {
 my @randomized_fasta_files;
 for my $file ( @randomized_bed_files ) { #no filehandles are open to this file
   my $fasta_file_name = $file . '.fa';
-  Z_score::bed_to_fa( $file , $fasta_file_name );
+  Clipseq::bed_to_fa( $file , $genome_fasta_file , $fasta_file_name );
   unshift @randomized_fasta_files, $fasta_file_name;
   unlink $file; #clean up BED upon conversion to FASTA
 }
@@ -198,7 +199,7 @@ warn "Completed conversion of randomized binding sites to sequences.\n" if $verb
 
 my @randomized_kmer_frequencies; #list of refs to hashes of kmer frequencies
 for my $file ( @randomized_fasta_files ) {
-  my $kmer_frequency_hashref = Z_score::count_kmers( $file , $k );
+  my $kmer_frequency_hashref = Clipseq::count_kmers( $file , $k );
   unshift @randomized_kmer_frequencies, $kmer_frequency_hashref;
   unlink $file; #clean up FASTA after collection of kmer frequency hashrefs
 }

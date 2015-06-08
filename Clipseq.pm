@@ -9,7 +9,7 @@ use feature qw/ state switch say /; #Modern perl features supported in 5.10 or n
 require Exporter;
 
 our @ISA = qw/ Exporter /;
-our $VERSION = '0.01';
+our $VERSION = '0.03';
 our @EXPORT_OK = qw/ is_valid_bed_line parse_bed_line read_bed_line write_bed_line discover_peaks build_genomic_coverage_strandwise widen_bed count_kmers bed_to_fa /; #Export nothing by default.
 
 #Format structures, callable from other namespaces that use this module:
@@ -663,7 +663,7 @@ The empirical algorithm used to discover significant CLIP-seq sites ("peaks") wa
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012, 2013, 2014, and 2015 by Brian Sebastian Cole
+Copyright (c) 2012, 2013, 2014, and 2015 by Brian Sebastian Cole, Kristen W. Lynch (klync@mail.med.upenn.edu), and the University of Pennsylvania
 
 This library is free software; you can redistribute it and/or modify it under the same terms as Perl itself, either Perl version 5.14.2 or, at your option, any later version of Perl 5 you have available.
 

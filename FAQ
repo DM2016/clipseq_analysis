@@ -1,0 +1,38 @@
+Frequently asked questions:
+
+1. What software is required to run the programs in this distribution?
+
+Only Perl version 5.10 or newer is required, with some core Perl modules (autodie, carp, GetOpt::Long, and etc.) that are included with Perl version 5.10 or newer.
+
+2. How do I run these programs?
+
+Invoke each program as a standalone executable or with a path to a valid Perl interpreter.  Each program will report usage information.  For a longer explanation, consult the CLIP-seq data analysis walkthrough provided in this distribution.
+
+3. What will I need to get started with CLIP-seq analysis?
+
+First you need CLIP-seq mapped reads.  This is discussed in greater detail in the walkthrough.
+
+4. Which data format(s) does this distribution support?
+
+Currently, only BED files are supported.  Many aligners can report tab-delimited text formats that can be directly converted to BED.  Additionally, conversion from SAM format is supported by the samtools distribution, available from your favorite package manager (e.g. apt).
+
+5. How do I request changes or get more support?
+
+You can request changes and/or report bugs by raising an issue on github: https://github.com/bryketos/clipseq_analysis
+You can also email the developer Brian Cole colebr@mail.med.upenn.edu and bryketos@gmail.com
+
+6. Can I make a fork of this distribution and modify it?
+
+Absolutely.  See the Copyright document for more information on the Perl license.
+
+7. Is the Clipseq.pm module available on CPAN?
+
+Currently this code is only available as a standalone distribution with executables and the Clipseq.pm module in one convient-to-use repository.  This may be subject to change in future releases.
+
+8. Does this code work for iCLIP or PAR-CLIP?
+
+This code was developed specifically for CLIP-seq analysis.  Analysis of other experiments related to CLIP-seq, such as iCLIP and PAR-CLIP is not supported, however components of the pipeline may be applicable.  Please consider iCLIP and PAR-CLIP as unsupported by this distribution.
+
+9. What other tools will I find useful?
+
+As documented in the walkthrough provided with this distribution, the bedtools and samtools distributions are quite useful.  Additionally, alignment software is needed to map raw CLIP-seq reads.  Genome browsers such as the UCSC genome browser are essential visualization tools and highly recommended for CLIP-seq analysis.

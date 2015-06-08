@@ -2,6 +2,8 @@ clipseq_analysis - Bioinformatics software for the analysis of CLIP-seq experime
 
 Installation: just add this directory to your environment's PATH and PERL5LIB variables.
 
+Requirements: Perl v5.10 or newer.
+
 Tools:
 
 discover_peaks        - A tool to identify CLIP-seq peaks from aligned reads. Takes BED format (so you might need to convert from what your aligner writes).
